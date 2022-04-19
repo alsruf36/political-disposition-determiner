@@ -1,0 +1,52 @@
+version: '3.9'
+
+services:
+  anvil:
+    container_name: anvil
+    networks:
+      - backend
+    image: anvil
+    ports:
+      - 2102:2102
+
+  mongo:
+    image: mongo:latest
+    restart: always
+    networks:
+      - backend
+    container_name: mongo
+    volumes:
+      - ./data/db:/data/db
+    ports:
+      - 27000:27017
+
+  mongo-express:
+    image: mongo-express
+    restart: always
+    networks:
+      - backend
+    environment:
+      ME_CONFIG_MONGODB_ADMINUSERNAME: alsruf36
+      ME_CONFIG_MONGODB_ADMINPASSWORD: ch86868686
+      ME_CONFIG_MONGODB_URL: mongodb://alsruf36:ch86868686@mongo:27017/
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=backend"
+      # HTTP Routers
+      - "traefik.http.routers.mongo-express-rtr.entrypoints=https"
+      - "traefik.http.routers.mongo-express-rtr.rule=Host(`mongo.${TRF_DOMAIN}`)"
+      - "traefik.http.routers.mongo-express-rtr.tls=true"
+      - "traefik.http.routers.mongo-express-rtr.tls.certresolver=leresolver"
+      # Services
+      - "traefik.http.routers.mongo-express-rtr.service=mongo-express-svc"
+      - "traefik.http.services.mongo-express-svc.loadbalancer.server.port=8081"
+      
+networks:
+  frontend:
+    name: frontend
+    driver: bridge
+ 
+  backend:
+    name: backend
+    driver: bridge
+
