@@ -27,4 +27,4 @@ USER anvil
 
 ENTRYPOINT ["anvil-app-server", "--data-dir", "/anvil-data"]
 
-CMD ["--app", "/colab_linker", "--origin", "http://localhost:2102", "--uplink-key", "server_YEW72CBQZBHHFVTJEFQLAQEH-BMIRAKWNH5DZNLW4"]
+CMD ["--app", "/colab_linker", "--origin", "http://kshs.dev:2102", "--uplink-key", "server_YEW72CBQZBHHFVTJEFQLAQEH-BMIRAKWNH5DZNLW4"]

@@ -11,19 +11,12 @@ import json
 import parmap
 from utils import CreateLogger
 
-dbclient = AuthMongoClient
-db = dbclient['comments']
-cur = db['comments']
-
 class Crawler:
     def __init__(self):
         self.ARTICLE_URL = "https://news.naver.com/main/list.nhn?mode=LS2D&mid=shm&sid2=269&sid1=100&date={}&page={}"
-        self.COMMENT_URL = "https://apis.naver.com/commentBox/cbox/web_naver_list_jsonp.json?ticket=news&pool=cbox5&lang=ko&country=KR&objectId=news{}%2C{}&categoryId=&pageSize=100&indexSize=10&groupId=&listType=OBJECT&pageType=more&page={}"
+        self.COMMENT_URL = "https://apis.naver.com/commentBox/cbox/web_neo_list_jsonp.json?ticket=news&templateId=view_politics&pool=cbox5&_callback=_callback&lang=ko&country&objectId=news{}%2C{}&includeAllStatus=true&pageSize=100&pageType=more&page={}"
         self.HEADER = {
             'User-Agent' : 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/89.0.4389.90 Safari/537.36',
-            'accept' : "*/*",
-            'accept-encoding' : 'gzip, deflate, br',
-            'accept-language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
             'referer' : 'https://news.naver.com/main/read.nhn?m_view=1&includeAllCount=true&mode=LSD&mid=shm&sid1=102&oid=119&aid=0002479801'  #이거 안넣으면 거부당함!
         }
 
@@ -64,8 +57,8 @@ class Crawler:
         ArticlePARAMs = []
 
         for url in ArticleURLs:
-            url_param = parse_qs(urlparse(url[0]).query)
-            ArticlePARAMs.append([url_param['oid'][0], url_param['aid'][0], url[1]])
+            url_split = url[0].split("/")
+            ArticlePARAMs.append([url_split[5], url_split[6].split("?")[0], url[1]])
 
         CONPARAMs = [x for x in ArticlePARAMs if x[2] in self.CON[:level]]
         PROPARAMs = [x for x in ArticlePARAMs if x[2] in self.PRO[:level]]
@@ -117,6 +110,7 @@ class Crawler:
                 comment.append(article[2])
                 comment.append(CONindex(article[2]))
 
+            print(str(len(comments)))
             if len(comments) > 50:
                 CONcomments.extend(comments)
 
@@ -128,12 +122,15 @@ class Crawler:
             for comment in comments:
                 comment.append(article[2])
                 comment.append(PROindex(article[2]))
-
+            
+            print(str(len(comments)))
             if len(comments) > 50:
                 PROcomments.extend(comments)
 
             else:
                 self.logger.debug("댓글 개수가 너무 적습니다.")
+
+        print ([CONcomments, PROcomments])
 
         return CONcomments, PROcomments
 
@@ -150,11 +147,6 @@ class Crawler:
         for comment in PROcomments:
             commentTuple = [comment[3], 1, comment[4], UnixTime(comment[4]), NoWnText(comment[0]), comment[1], comment[2], 1, comment[5], comment[6]]
             commitTargets.append(commentTuple)
-
-        requests.put(self.DBURL, json={
-            "date": date,
-            "data": commitTargets
-        })
 
     def dateDevide(self, start, end):
         start = datetime.strptime(start, "%Y%m%d")
@@ -190,20 +182,24 @@ class Crawler:
             try:
                 CONcomments, PROcomments = self.getCommentsByDate(date, level)
                 break
-            except:
+            except Exception as e:
+                print(e)
                 self.logger.error("네트워크 에러가 났습니다. 다시 시도합니다.")
                 tried += 1
 
-        self.putDataToDB(CONcomments, PROcomments, date)
+        return [CONcomments, PROcomments, date]
 
     def crawlMulti(self, start, end, level):
         dates = self.dateDevide(start, end)
         dates = reversed(dates)
-        num_cores = 40
 
-        parmap.map(self.crawlDate, dates, level, pm_pbar=False, pm_processes=num_cores)
+        for i in dates:
+            self.crawlDate(i, level)
+
         print("완료되었습니다.")
 
 if __name__=='__main__':
     c = Crawler()
-    c.crawlMulti("20160101", "20200701", 4)
+    #c.crawlMulti("20160101", "20200701", 4)
+    r = c.crawlDate("20200201", 4)
+    print(r)
