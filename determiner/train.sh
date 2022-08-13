@@ -1,0 +1,11 @@
+python3 bertModeler.py      --ray_address 0.0.0.0 \
+                            --ray_port 10001 \
+                            --comment_count 100000 \
+                            --comment_minlike 20 \
+                            --comment_minlength 20 \
+                            --comment_mintimestamp 1514732400 \
+                            --train_epoch 20 \
+                            --s3_end_point 0.0.0.0 \
+                            --s3_port 9000 \
+                            --s3_access_key admin \
+                            --s3_secret_key pass
