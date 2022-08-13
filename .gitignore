@@ -3,6 +3,7 @@ env/
 *.py[cod]
 mongoin
 comment_crawler/mongodbAuth.py
-comments.json
-.anvil-data/
+comment_crawler/__pycache__/
+comment_crawler/.cache/
+comment_crawler/logs/
 data/
