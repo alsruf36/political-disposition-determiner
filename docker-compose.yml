@@ -20,7 +20,7 @@ services:
     environment:
       ME_CONFIG_MONGODB_ADMINUSERNAME: REDACTED_USER
       ME_CONFIG_MONGODB_ADMINPASSWORD: REDACTED_PASSWORD
-      ME_CONFIG_MONGODB_URL: mongodb://REDACTED_USER:REDACTED_PASSWORD@mongo:27010/
+      ME_CONFIG_MONGODB_URL: mongodb://REDACTED_USER:REDACTED_PASSWORD@mongo:27017/
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=backend"
