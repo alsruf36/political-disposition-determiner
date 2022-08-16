@@ -20,7 +20,7 @@ services:
     environment:
       ME_CONFIG_MONGODB_ADMINUSERNAME: alsruf36
       ME_CONFIG_MONGODB_ADMINPASSWORD: ch86868686
-      ME_CONFIG_MONGODB_URL: mongodb://alsruf36:ch86868686@mongo:27010/
+      ME_CONFIG_MONGODB_URL: mongodb://alsruf36:ch86868686@mongo:27017/
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=backend"
