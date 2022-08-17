@@ -40,7 +40,6 @@ jmespath==1.0.1
 joblib==1.1.0
 JPype1==1.4.0
 jsonschema==4.9.1
-kobert==0.2.3
 konlpy==0.6.0
 lxml==4.9.1
 minio==7.1.11

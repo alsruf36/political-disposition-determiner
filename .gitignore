@@ -7,3 +7,6 @@ comment_crawler/__pycache__/
 comment_crawler/.cache/
 comment_crawler/logs/
 data/
+.venv/
+.env
+determiner/.env
