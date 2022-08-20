@@ -16,8 +16,8 @@ import argparse
 import json
 
 #kobert
-from kobert import get_tokenizer
-from kobert import get_pytorch_kobert_model
+from kobert_tokenizer import KoBERTTokenizer
+from transformers import BertModel
 
 #transformers
 from transformers import AdamW
@@ -28,17 +28,18 @@ from minio import Minio
 
 # BERT 모델에 들어가기 위한 dataset을 만들어주는 클래스
 class BERTDataset(Dataset):
-    def __init__(self, dataset, sent_idx, label_idx, bert_tokenizer, max_len,
-                 pad, pair):
+    def __init__(self, dataset, sent_idx, label_idx, bert_tokenizer, vocab,
+                max_len, pad, pair):
+   
         transform = nlp.data.BERTSentenceTransform(
-            bert_tokenizer, max_seq_length=max_len, pad=pad, pair=pair)
-
+            bert_tokenizer, max_seq_length=max_len, vocab=vocab, pad=pad, pair=pair)
+        
         self.sentences = [transform([i[sent_idx]]) for i in dataset]
         self.labels = [np.int32(i[label_idx]) for i in dataset]
 
     def __getitem__(self, i):
         return (self.sentences[i] + (self.labels[i], ))
-
+         
     def __len__(self):
         return (len(self.labels))
 
@@ -71,10 +72,25 @@ class BERTClassifier(nn.Module):
             out = self.dropout(pooler)
         return self.classifier(out)
 
-@ray.remote
-def get_kobert():
-    bertmodel, vocab = get_pytorch_kobert_model()
-    
+@ray.remote(num_gpus=1)
+def get_tokenizer(model_path):
+    tokenizer = KoBERTTokenizer.from_pretrained(model_path)
+    tokenizer_ref = ray.put(tokenizer)
+
+    return tokenizer_ref
+
+def get_kobert_model(model_path, vocab_file, ctx="cpu"):
+    bertmodel = BertModel.from_pretrained(model_path, return_dict=False)
+    device = torch.device(ctx)
+    bertmodel.to(device)
+    bertmodel.eval()
+    vocab_b_obj = nlp.vocab.BERTVocab.from_sentencepiece(vocab_file,
+                                                         padding_token='[PAD]')
+    return bertmodel, vocab_b_obj
+
+@ray.remote(num_gpus=1)
+def get_kobert(model_path, tokenizer, ctx="cpu"):
+    bertmodel, vocab = get_kobert_model(model_path, tokenizer.vocab_file)
     bertmodel_ref = ray.put(bertmodel)
     vocab_ref = ray.put(vocab)
 
@@ -89,7 +105,7 @@ def get_raw_data(count, minlike, minlength, mintimestamp):
 
     #파라미터에서 count는 꼭 포함해야 하며, count 외에는 필요한 조건만 포함해야한다.
     params = {
-        "count": count,            #불러올 댓글 개수
+        "count": count,            #불러올 댓글 개수 
         #"tend": "pro",             #정치 성향 (con : 보수 | pro : 진보)
         "minlike": minlike,              #댓글의 최소 공감 개수
         "minlength": minlength,            #댓글의 최소 길이
@@ -113,7 +129,7 @@ def get_raw_data(count, minlike, minlength, mintimestamp):
     return ray.put(cons), ray.put(pros)
 
 #train & test 데이터로 나누기
-@ray.remote
+@ray.remote(num_gpus=1)
 def split_train_test_data(cons, pros):
     print("[단계 2] | 데이터를 나눕니다.")
     Cdataset_train, Cdataset_test = train_test_split(cons, test_size=0.25, random_state=0)
@@ -126,13 +142,12 @@ def split_train_test_data(cons, pros):
 
 #토큰화
 @ray.remote(num_gpus=1)
-def tokenize(dataset_train, data_test, max_len, batch_size, vocab):
+def tokenize(dataset_train, dataset_test, max_len, batch_size, vocab, tokenizer):
     print("[단계 3] | Tokenize합니다.")
-    tokenizer = get_tokenizer()
-    tok = nlp.data.BERTSPTokenizer(tokenizer, vocab, lower=False)
-    data_train = BERTDataset(dataset_train, 0, 1, tok, max_len, True, False)
-    data_test = BERTDataset(data_test, 0, 1, tok, max_len, True, False)
-    #print(data_train[0])
+    tok = tokenizer.tokenize
+    data_train = BERTDataset(dataset_train, 0, 1, tok, vocab, max_len, True, False)
+    data_test = BERTDataset(dataset_test, 0, 1, tok, vocab, max_len, True, False)
+    print(data_train[0])
     train_dataloader = torch.utils.data.DataLoader(data_train, batch_size=batch_size, num_workers=5)
     test_dataloader = torch.utils.data.DataLoader(data_test, batch_size=batch_size, num_workers=5)
 
@@ -144,11 +159,10 @@ def calc_accuracy(X, Y):
     return train_acc
 
 @ray.remote(num_gpus=1)
-def train(train_dataloader, test_dataloader, warmup_ratio, num_epochs, max_grad_norm, log_interval, learning_rate):
+def train(train_dataloader, test_dataloader, warmup_ratio, num_epochs, max_grad_norm, log_interval, learning_rate, bertmodel, ctx="cpu"):
     print("[단계 4] | 모델을 학습시킵니다.")
     
-    bertmodel, _ = get_pytorch_kobert_model()
-    device = torch.device("cuda:0")
+    device = torch.device(ctx)
     model = BERTClassifier(bertmodel,  dr_rate=0.5).to(device)
 
     no_decay = ['bias', 'LayerNorm.weight']
@@ -203,7 +217,7 @@ def train(train_dataloader, test_dataloader, warmup_ratio, num_epochs, max_grad_
 
     return buffer_ref
 
-@ray.remote
+@ray.remote(num_gpus=1)
 def save_model(buffer, end_point, port, access_key, secret_key):
     print("[단계 5] | 모델을 저장합니다.")
 
@@ -238,14 +252,17 @@ def do_train_cycle(
         s3_end_point="s3.kshs.dev",
         s3_port=9000,
         s3_access_key="",
-        s3_secret_key=""
+        s3_secret_key="",
+        model_path="skt/kobert-base-v1",
+        device="cuda:0"
     ):
 
-    _, vocab_ref = ray.get(get_kobert.remote())
+    tokenizer_ref = ray.get(get_tokenizer.remote(model_path))
+    bertmodel_ref, vocab_ref = ray.get(get_kobert.remote(model_path, tokenizer_ref))
     c1, c2 = ray.get(get_raw_data.remote(count, minlike, minlength, mintimestamp))
     c1, c2 = ray.get(split_train_test_data.remote(c1, c2))
-    c1, c2 = ray.get(tokenize.remote(c1, c2, max_len, batch_size, vocab_ref))
-    buffer_ref = ray.get(train.remote(c1, c2, warmup_ratio, num_epochs, max_grad_norm, log_interval, learning_rate))
+    c1, c2 = ray.get(tokenize.remote(c1, c2, max_len, batch_size, vocab_ref, tokenizer_ref))
+    buffer_ref = ray.get(train.remote(c1, c2, warmup_ratio, num_epochs, max_grad_norm, log_interval, learning_rate, bertmodel_ref, device))
     file_name = ray.get(save_model.remote(buffer_ref, s3_end_point, s3_port, s3_access_key, s3_secret_key))
 
     return file_name
@@ -266,6 +283,7 @@ if __name__=='__main__':
     args = parser.parse_args()
 
     print("ray cluster에 연결합니다.")
+    print(f"ray://{args.ray_address}:{args.ray_port}")
     ray.init(f"ray://{args.ray_address}:{args.ray_port}")
     
     print("학습을 시작합니다.")

@@ -1,7 +1,7 @@
 source <(cat .env | sed -e '/^#/d;/^\s*$/d' -e "s/'/'\\\''/g" -e "s/=\(.*\)/='\1'/g")
 
-RAY_ADDRESS=kubectl get svc -A | awk '/ray-ray-head/{print $4}'
-S3_ADDRESS=kubectl get svc -A | awk '/minio/{print $4}'
+RAY_ADDRESS=`kubectl get svc -A | awk '/ray-ray-head/{print $4}'`
+S3_ADDRESS=`kubectl get svc -A | awk '/minio/{print $4}'`
 
 python3 scripts/bertEveluator.py    --ray_address ${RAY_ADDRESS} \
                                     --ray_port 10001 \
