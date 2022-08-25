@@ -8,5 +8,6 @@ comment_crawler/.cache/
 comment_crawler/logs/
 data/
 .venv/
+.venv38/
 .env
 determiner/.env
