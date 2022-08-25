@@ -26,6 +26,8 @@ from sklearn.model_selection import train_test_split
 
 from minio import Minio
 
+from utils import random_id
+
 # BERT 모델에 들어가기 위한 dataset을 만들어주는 클래스
 class BERTDataset(Dataset):
     def __init__(self, dataset, sent_idx, label_idx, bert_tokenizer, vocab,
@@ -147,7 +149,7 @@ def tokenize(dataset_train, dataset_test, max_len, batch_size, vocab, tokenizer)
     tok = tokenizer.tokenize
     data_train = BERTDataset(dataset_train, 0, 1, tok, vocab, max_len, True, False)
     data_test = BERTDataset(dataset_test, 0, 1, tok, vocab, max_len, True, False)
-    print(data_train[0])
+    #print(data_train[0])
     train_dataloader = torch.utils.data.DataLoader(data_train, batch_size=batch_size, num_workers=5)
     test_dataloader = torch.utils.data.DataLoader(data_test, batch_size=batch_size, num_workers=5)
 
@@ -163,7 +165,7 @@ def train(train_dataloader, test_dataloader, warmup_ratio, num_epochs, max_grad_
     print("[단계 4] | 모델을 학습시킵니다.")
     
     device = torch.device(ctx)
-    model = BERTClassifier(bertmodel,  dr_rate=0.5).to(device)
+    model = BERTClassifier(bertmodel, dr_rate=0.5).to(device)
 
     no_decay = ['bias', 'LayerNorm.weight']
     optimizer_grouped_parameters = [
@@ -283,7 +285,6 @@ if __name__=='__main__':
     args = parser.parse_args()
 
     print("ray cluster에 연결합니다.")
-    print(f"ray://{args.ray_address}:{args.ray_port}")
     ray.init(f"ray://{args.ray_address}:{args.ray_port}")
     
     print("학습을 시작합니다.")
