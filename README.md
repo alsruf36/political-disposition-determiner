@@ -1,10 +1,9 @@
 # political-disposition-determiner
 
 ## Folders
-- frontend : for frontend
 - news_crawler : news crawler to suggest articles
 - comment_crawler : comments crawler to make comment database
-- colab_linker : A linker to offer API connected with google colab
+- determiner : codes for train, inference and serve model
 - notebooks : colab notebooks
 
 ## Press
@@ -34,7 +33,7 @@ Then, modify the date range and level in the last line of `crawlerMONGODB.py`.
 python3 crawlerMONGODB.py
 ```
 
-If you crawled using the depreciated code `crawlerSQLITE.py`, you have to combine the db into mongo db by using `dbupdate.py`.
+If you crawled using the depreciated code `crawlerSQLITE.py`, you have to merge the db into mongo db by using `dbupdate.py`.
 
 ## Deploy frontend to Heroku
 ```python
@@ -46,13 +45,4 @@ heroku stack:set container #스택 유형 변경
 git add .
 git commit -m "heroku"
 git push heroku master #Deploy 끝
-```
-
-## Run colab linker
-```python
-nano anvil_startup #origin과 uplin-key를 수정해준다. [https://github.com/anvil-works/anvil-runtime 참고]
-su - <NON_ROOT_USER> #anvil runtime은 non root user이 실행해야 오류가 없다.
-chmod +x anvil_startup
-
-./anvil_startup
 ```
