@@ -302,5 +302,7 @@ if __name__=='__main__':
 
     xcom_return = {"filename": file_name}
 
+    print(xcom_return)
+
     with open("/airflow/xcom/return.json", "w") as file:
         json.dump(xcom_return, file)
