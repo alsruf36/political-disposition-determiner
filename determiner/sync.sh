@@ -1,3 +1,15 @@
-cp bertEveluator.py /projects/political-determiner-pipeline/data/bertEveluator.py
-cp bertModeler.py /projects/political-determiner-pipeline/data/bertModeler.py
-cp dags/dag.py /projects/political-determiner-pipeline/dags/bert-dag.py
+DATA_FOLDER=/projects/political-disposition-determiner-data/data
+DAG_FOLDER=/projects/political-disposition-determiner-data/dags
+
+cp scripts/*.py ${DATA_FOLDER}
+cp dags/*.py ${DAG_FOLDER}
+cp .env ${DATA_FOLDER}/.env
+
+RAY_ADDRESS=`kubectl get pods -A -o=wide | awk '/ray-ray-head/{print $7}'`
+S3_ADDRESS=`kubectl get pods -A -o=wide | awk '/minio/{print $7}'`
+
+echo -e "\n" | tee -a ${DATA_FOLDER}/.env > '/dev/null'
+echo "RAY_ADDRESS="${RAY_ADDRESS} | tee -a ${DATA_FOLDER}/.env > '/dev/null'
+echo "S3_ADDRESS="${S3_ADDRESS} | tee -a ${DATA_FOLDER}/.env > '/dev/null'
+
+sed -i 's/^ *//; s/ *$//; /^$/d; /^\s*$/d' ${DATA_FOLDER}/.env
