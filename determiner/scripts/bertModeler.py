@@ -74,13 +74,6 @@ class BERTClassifier(nn.Module):
             out = self.dropout(pooler)
         return self.classifier(out)
 
-@ray.remote(num_gpus=1)
-def get_tokenizer(model_path):
-    tokenizer = KoBERTTokenizer.from_pretrained(model_path)
-    tokenizer_ref = ray.put(tokenizer)
-
-    return tokenizer_ref
-
 def get_kobert_model(model_path, vocab_file, ctx="cpu"):
     bertmodel = BertModel.from_pretrained(model_path, return_dict=False)
     device = torch.device(ctx)
@@ -90,8 +83,9 @@ def get_kobert_model(model_path, vocab_file, ctx="cpu"):
                                                          padding_token='[PAD]')
     return bertmodel, vocab_b_obj
 
-@ray.remote(num_gpus=1)
-def get_kobert(model_path, tokenizer, ctx="cpu"):
+@ray.remote
+def get_kobert(model_path, ctx="cpu"):
+    tokenizer = KoBERTTokenizer.from_pretrained(model_path)
     bertmodel, vocab = get_kobert_model(model_path, tokenizer.vocab_file)
     bertmodel_ref = ray.put(bertmodel)
     vocab_ref = ray.put(vocab)
@@ -144,8 +138,9 @@ def split_train_test_data(cons, pros):
 
 #토큰화
 @ray.remote(num_gpus=1)
-def tokenize(dataset_train, dataset_test, max_len, batch_size, vocab, tokenizer):
+def tokenize(dataset_train, dataset_test, max_len, batch_size, vocab, model_path):
     print("[단계 3] | Tokenize합니다.")
+    tokenizer = KoBERTTokenizer.from_pretrained(model_path)
     tok = tokenizer.tokenize
     data_train = BERTDataset(dataset_train, 0, 1, tok, vocab, max_len, True, False)
     data_test = BERTDataset(dataset_test, 0, 1, tok, vocab, max_len, True, False)
@@ -161,7 +156,8 @@ def calc_accuracy(X, Y):
     return train_acc
 
 @ray.remote(num_gpus=1)
-def train(train_dataloader, test_dataloader, warmup_ratio, num_epochs, max_grad_norm, log_interval, learning_rate, bertmodel, ctx="cpu"):
+def train(train_dataloader, test_dataloader, warmup_ratio, num_epochs, max_grad_norm, log_interval, learning_rate, bertmodel,
+        s3_end_point, s3_port, s3_access_key, s3_secret_key, ctx="cpu"):
     print("[단계 4] | 모델을 학습시킵니다.")
     
     device = torch.device(ctx)
@@ -181,6 +177,8 @@ def train(train_dataloader, test_dataloader, warmup_ratio, num_epochs, max_grad_
     scheduler = get_cosine_schedule_with_warmup(optimizer, num_warmup_steps=warmup_step, num_training_steps=t_total)
     train_dataloader
 
+    model_list = []
+    save_ref_list = []
     for e in range(num_epochs):
         train_acc = 0.0
         test_acc = 0.0
@@ -212,25 +210,56 @@ def train(train_dataloader, test_dataloader, warmup_ratio, num_epochs, max_grad_
             test_acc += calc_accuracy(out, label)
         print("epoch {} test acc {}".format(e+1, test_acc / (batch_id+1)))
 
-    buffer = io.BytesIO()
-    torch.save(model.state_dict(), buffer)
+        timestamp = int(pydatetime.datetime.now().timestamp())
+        model_info = {
+            "epoch": e+1,
+            "train_acc": train_acc / (batch_id+1),
+            "test_acc": test_acc / (batch_id+1),
+            "timestamp": timestamp,
+            "file_name": f'kobert/model-{timestamp}.pt'
+        }
 
-    buffer_ref = ray.put(buffer)
+        buffer = io.BytesIO()
+        torch.save(model.state_dict(), buffer)
 
-    return buffer_ref
+        save_ref_list.append(save_model.remote(buffer, s3_end_point, s3_port, s3_access_key, s3_secret_key, model_info))
+        model_list.append(model_info)
+
+    print("모델을 저장하는 중 입니다. (lazy save)")
+    ray.get(save_ref_list)
+    print("모델 저장이 완료되었습니다. (lazy save)")
+
+    return model_list
 
 @ray.remote(num_gpus=1)
-def save_model(buffer, end_point, port, access_key, secret_key):
-    print("[단계 5] | 모델을 저장합니다.")
+def save_model(buffer, end_point, port, access_key, secret_key, model_info):
+    print("[save hook] | 모델을 저장합니다.")
 
     minioClient = Minio(f'{end_point}:{port}',
                     access_key=access_key,
                     secret_key=secret_key,
                     secure=False)
 
-    file_name = 'kobert/model-{}.pt'.format(int(pydatetime.datetime.now().timestamp()))
     buffer_len = buffer.tell()
     buffer.seek(0)
+
+    try:
+        minioClient.put_object('models', model_info['file_name'], data=buffer, length=buffer_len)
+    except Exception as e:
+        raise e
+
+@ray.remote
+def save_model_info(buffer, end_point, port, access_key, secret_key):
+    print("[단계 5] | 모델 정보를 저장합니다.")
+
+    minioClient = Minio(f'{end_point}:{port}',
+                    access_key=access_key,
+                    secret_key=secret_key,
+                    secure=False)
+
+    buffer_len = buffer.getbuffer().nbytes
+    buffer.seek(0)
+    file_name = f'kobert/model_list-{int(pydatetime.datetime.now().timestamp())}.json'
 
     try:
         minioClient.put_object('models', file_name, data=buffer, length=buffer_len)
@@ -238,6 +267,21 @@ def save_model(buffer, end_point, port, access_key, secret_key):
         raise e
 
     return file_name
+
+def get_best_model(model_list):
+    max = model_list[0]
+    for x in model_list:
+        if x['train_acc'] > max['train_acc']:
+            max = x
+
+    return max
+
+def dict_to_json_buffer(dict_):
+    s_buffer = io.StringIO()
+    json.dump(dict_, s_buffer, indent=4)
+    b_buffer = io.BytesIO(s_buffer.getvalue().encode('utf8'))
+
+    return b_buffer
 
 def do_train_cycle(
         count=1000,
@@ -258,16 +302,22 @@ def do_train_cycle(
         model_path="skt/kobert-base-v1",
         device="cuda:0"
     ):
-
-    tokenizer_ref = ray.get(get_tokenizer.remote(model_path))
-    bertmodel_ref, vocab_ref = ray.get(get_kobert.remote(model_path, tokenizer_ref))
+    
+    bertmodel_ref, vocab_ref = ray.get(get_kobert.remote(model_path))
     c1, c2 = ray.get(get_raw_data.remote(count, minlike, minlength, mintimestamp))
     c1, c2 = ray.get(split_train_test_data.remote(c1, c2))
-    c1, c2 = ray.get(tokenize.remote(c1, c2, max_len, batch_size, vocab_ref, tokenizer_ref))
-    buffer_ref = ray.get(train.remote(c1, c2, warmup_ratio, num_epochs, max_grad_norm, log_interval, learning_rate, bertmodel_ref, device))
-    file_name = ray.get(save_model.remote(buffer_ref, s3_end_point, s3_port, s3_access_key, s3_secret_key))
+    c1, c2 = ray.get(tokenize.remote(c1, c2, max_len, batch_size, vocab_ref, model_path))
+    model_list = ray.get(
+        train.remote(
+            c1, c2, warmup_ratio, num_epochs, max_grad_norm, log_interval, learning_rate, bertmodel_ref,
+            s3_end_point, s3_port, s3_access_key, s3_secret_key, device
+        )
+    )
+    best_model = get_best_model(model_list)
+    model_list_buffer = dict_to_json_buffer(model_list)
+    model_list_file_name = ray.get(save_model_info.remote(model_list_buffer, s3_end_point, s3_port, s3_access_key, s3_secret_key))
 
-    return file_name
+    return best_model['file_name'], model_list_file_name
 
 if __name__=='__main__':
     parser = argparse.ArgumentParser(description='bertModeler')
@@ -288,7 +338,7 @@ if __name__=='__main__':
     ray.init(f"ray://{args.ray_address}:{args.ray_port}")
     
     print("학습을 시작합니다.")
-    file_name = do_train_cycle(
+    file_name, model_list_file_name = do_train_cycle(
         count=args.comment_count,
         minlike=args.comment_minlike,
         minlength=args.comment_minlength,
@@ -300,7 +350,10 @@ if __name__=='__main__':
         s3_secret_key=args.s3_secret_key
     )
 
-    xcom_return = {"filename": file_name}
+    xcom_return = {
+            "file_name": file_name,
+            "model_list_file_name": model_list_file_name
+        }
 
     print(xcom_return)
 
