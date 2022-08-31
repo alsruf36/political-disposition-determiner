@@ -114,7 +114,7 @@ def train_and_deploy_dag():
         arguments=[
             "--ray_address", "{{ task_instance.xcom_pull('get_env')['RAY_ADDRESS'] }}",
             "--ray_port", ray_port,
-            "--file_name", "{{ task_instance.xcom_pull('train')['filename'] }}",
+            "--file_name", "{{ task_instance.xcom_pull('train')['file_name'] }}",
             "--s3_end_point", "{{ task_instance.xcom_pull('get_env')['S3_ADDRESS'] }}",
             "--s3_port", s3_port,
             "--s3_access_key", "{{ task_instance.xcom_pull('get_env')['S3_ACCESS_KEY'] }}",

@@ -5,7 +5,7 @@ cp scripts/*.py ${DATA_FOLDER}
 cp dags/*.py ${DAG_FOLDER}
 cp .env ${DATA_FOLDER}/.env
 
-RAY_ADDRESS=`kubectl get pods -A -o=wide | awk '/ray-ray-head/{print $7}'`
+RAY_ADDRESS=`kubectl get svc -A | awk '/raycluster-kube-head-svc/{print $4}'`
 S3_ADDRESS=`kubectl get pods -A -o=wide | awk '/minio/{print $7}'`
 
 echo -e "\n" | tee -a ${DATA_FOLDER}/.env > '/dev/null'
