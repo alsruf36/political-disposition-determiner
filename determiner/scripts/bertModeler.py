@@ -231,7 +231,7 @@ def train(train_dataloader, test_dataloader, warmup_ratio, num_epochs, max_grad_
 
     return model_list
 
-@ray.remote(num_gpus=1)
+@ray.remote(memory=2 * 1000 * 1024 * 1024)
 def save_model(buffer, end_point, port, access_key, secret_key, model_info):
     print("[save hook] | 모델을 저장합니다.")
 
@@ -247,6 +247,8 @@ def save_model(buffer, end_point, port, access_key, secret_key, model_info):
         minioClient.put_object('models', model_info['file_name'], data=buffer, length=buffer_len)
     except Exception as e:
         raise e
+
+    print("[save hook] | 모델이 저장되었습니다.")
 
 @ray.remote
 def save_model_info(buffer, end_point, port, access_key, secret_key):
@@ -308,7 +310,7 @@ def do_train_cycle(
     c1, c2 = ray.get(split_train_test_data.remote(c1, c2))
     c1, c2 = ray.get(tokenize.remote(c1, c2, max_len, batch_size, vocab_ref, model_path))
     model_list = ray.get(
-        train.remote(
+        train.options(memory=30 * 1000 * 1024 * 1024).remote(
             c1, c2, warmup_ratio, num_epochs, max_grad_norm, log_interval, learning_rate, bertmodel_ref,
             s3_end_point, s3_port, s3_access_key, s3_secret_key, device
         )

@@ -9,7 +9,7 @@ python3 scripts/bertModeler.py      --ray_address ${RAY_ADDRESS} \
                                     --comment_minlike 20 \
                                     --comment_minlength 20 \
                                     --comment_mintimestamp 1514732400 \
-                                    --train_epoch 1 \
+                                    --train_epoch 5 \
                                     --s3_end_point ${S3_ADDRESS} \
                                     --s3_port 9000 \
                                     --s3_access_key ${S3_ACCESS_KEY} \

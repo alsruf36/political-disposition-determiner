@@ -12,7 +12,6 @@ import requests
 import json
 import ray
 from ray import serve
-from ray.runtime_env import RuntimeEnv
 import string
 import os
 import random
@@ -293,18 +292,6 @@ if __name__=='__main__':
     parser.add_argument('-s', '--s3_secret_key', default='pass', type=str)
     parser.add_argument('-d', '--api_name', default='analyze', type=str)
     args = parser.parse_args()
-
-    ray_env = RuntimeEnv(
-        pip = {
-            "packages":[
-                "transformers",
-                "kobert-transformers",
-                "git+https://github.com/SKTBrain/KoBERT.git#egg=kobert_tokenizer&subdirectory=kobert_hf",
-                "gluonnlp"
-            ],
-            "pip_check": False
-        }
-    )
 
     print("ray cluster에 연결합니다.")
     ray.init(f"ray://{args.ray_address}:{args.ray_port}")
