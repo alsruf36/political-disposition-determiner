@@ -14,6 +14,7 @@ import ray
 import io
 import argparse
 import json
+from pprint import pprint
 
 #kobert
 from kobert_tokenizer import KoBERTTokenizer
@@ -94,25 +95,32 @@ def get_kobert(model_path, ctx="cpu"):
 
 #데이터셋 가져오기
 @ray.remote
-def get_raw_data(count, minlike, minlength, mintimestamp):
+def get_raw_data(count, minlike, minlength, mintimestamp, maxtimestamp):
     print("[단계 1] | API를 통해 데이터를 불러옵니다.")
+    print(f"[단계 1] | 설정 기간 : {mintimestamp} - {maxtimestamp}")
 
     URL = "https://project.kshs.dev/comment" #댓글 요청을 위한 URL
 
     #파라미터에서 count는 꼭 포함해야 하며, count 외에는 필요한 조건만 포함해야한다.
     params = {
-        "count": count,            #불러올 댓글 개수 
-        #"tend": "pro",             #정치 성향 (con : 보수 | pro : 진보)
-        "minlike": minlike,              #댓글의 최소 공감 개수
-        "minlength": minlength,            #댓글의 최소 길이
-        "mintimestamp": mintimestamp, #댓글의 최소 날짜 (Unix Time 형식)
-        #"level": 3                 #언론사의 레벨 (0부터 3까지 이며 그 숫자 이하 레벨의 모든 언론사를 대상으로 한다. 숫자가 작을수록 극좌/극우에 가깝다.)
+        "count": count,                     #불러올 댓글 개수 
+        #"tend": "pro",                     #정치 성향 (con : 보수 | pro : 진보)
+        "minlike": minlike,                 #댓글의 최소 공감 개수
+        "minlength": minlength,             #댓글의 최소 길이
+        "mintimestamp": mintimestamp,       #댓글의 최소 날짜 (Unix Time 형식)
+        "maxtimestamp": maxtimestamp,       #댓글의 최대 날짜 (Unix Time 형식)
+        #"level": 3                         #언론사의 레벨 (0부터 3까지 이며 그 숫자 이하 레벨의 모든 언론사를 대상으로 한다. 숫자가 작을수록 극좌/극우에 가깝다.)
     }
+
+    print("[단계 1] | 요청 params")
+    pprint(params)
 
     try:
         response = requests.get(URL, params=params) #requests 모듈을 통해 API에 요청
         comments = json.loads(response.text) #로드된 JSON 텍스트를 배열로 변경
-        contents = [[x['normalize'][1]['text'], x['calculate']] for x in comments] #comments 중 원하는 항목만 추출
+        #contents = [[x['normalize'][1]['text'], x['calculate']] for x in comments] #comments 중 원하는 항목만 추출
+        contents = [[x['normalize'][0]['text'], x['tend']] for x in comments] #comments 중 원하는 항목만 추출
+        contents = [[x['text'], x['tend']] for x in comments] #comments 중 원하는 항목만 추출
 
         cons = [x for x in contents if x[1] == 0] #보수 댓글 리스트
         pros = [x for x in contents if x[1] == 1] #진보 댓글 리스트
@@ -128,8 +136,8 @@ def get_raw_data(count, minlike, minlength, mintimestamp):
 @ray.remote(num_gpus=1)
 def split_train_test_data(cons, pros):
     print("[단계 2] | 데이터를 나눕니다.")
-    Cdataset_train, Cdataset_test = train_test_split(cons, test_size=0.25, random_state=0)
-    Pdataset_train, Pdataset_test = train_test_split(pros, test_size=0.25, random_state=0)
+    Cdataset_train, Cdataset_test = train_test_split(cons, test_size=0.25, train_size=0.75, random_state=0)
+    Pdataset_train, Pdataset_test = train_test_split(pros, test_size=0.25, train_size=0.75, random_state=0)
     dataset_train = Cdataset_train + Pdataset_train
     dataset_test = Cdataset_test + Pdataset_test
 
@@ -289,7 +297,8 @@ def do_train_cycle(
         count=1000,
         minlike=10,
         minlength=10,
-        mintimestamp=1514732400,
+        mintimestamp=1262271600,
+        maxtimestamp=1514732500,
         max_len=64,
         batch_size=64,
         warmup_ratio=0.1,
@@ -305,10 +314,10 @@ def do_train_cycle(
         device="cuda:0"
     ):
     
-    bertmodel_ref, vocab_ref = ray.get(get_kobert.remote(model_path))
-    c1, c2 = ray.get(get_raw_data.remote(count, minlike, minlength, mintimestamp))
-    c1, c2 = ray.get(split_train_test_data.remote(c1, c2))
-    c1, c2 = ray.get(tokenize.remote(c1, c2, max_len, batch_size, vocab_ref, model_path))
+    bertmodel_ref, vocab_ref = ray.get(get_kobert.options(memory=6 * 1000 * 1024 * 1024).remote(model_path))
+    c1, c2 = ray.get(get_raw_data.options(memory=1 * 1000 * 1024 * 1024).remote(count, minlike, minlength, mintimestamp, maxtimestamp))
+    c1, c2 = ray.get(split_train_test_data.options(memory=6 * 1000 * 1024 * 1024).remote(c1, c2))
+    c1, c2 = ray.get(tokenize.options(memory=6 * 1000 * 1024 * 1024).remote(c1, c2, max_len, batch_size, vocab_ref, model_path))
     model_list = ray.get(
         train.options(memory=30 * 1000 * 1024 * 1024).remote(
             c1, c2, warmup_ratio, num_epochs, max_grad_norm, log_interval, learning_rate, bertmodel_ref,
@@ -317,7 +326,7 @@ def do_train_cycle(
     )
     best_model = get_best_model(model_list)
     model_list_buffer = dict_to_json_buffer(model_list)
-    model_list_file_name = ray.get(save_model_info.remote(model_list_buffer, s3_end_point, s3_port, s3_access_key, s3_secret_key))
+    model_list_file_name = ray.get(save_model_info.options(memory=1 * 1000 * 1024 * 1024).remote(model_list_buffer, s3_end_point, s3_port, s3_access_key, s3_secret_key))
 
     return best_model['file_name'], model_list_file_name
 
@@ -328,8 +337,9 @@ if __name__=='__main__':
     parser.add_argument('-c', '--comment_count', default='1000', type=int)
     parser.add_argument('-l', '--comment_minlike', default='20', type=int)
     parser.add_argument('-e', '--comment_minlength', default='20', type=int)
-    parser.add_argument('-t', '--comment_mintimestamp', default='1514732400', type=int)
-    parser.add_argument('-m', '--train_epoch', default='2', type=int)
+    parser.add_argument('-t', '--comment_mintimestamp', default='1262271600', type=int) # 2021/06/01
+    parser.add_argument('-b', '--comment_maxtimestamp', default='1646751600', type=int) # 2022/02/23
+    parser.add_argument('-m', '--train_epoch', default='10', type=int)
     parser.add_argument('-i', '--s3_end_point', default='0.0.0.0', type=str)
     parser.add_argument('-p', '--s3_port', default='9000', type=int)
     parser.add_argument('-a', '--s3_access_key', default='admin', type=str)
@@ -345,6 +355,7 @@ if __name__=='__main__':
         minlike=args.comment_minlike,
         minlength=args.comment_minlength,
         mintimestamp=args.comment_mintimestamp,
+        maxtimestamp=args.comment_maxtimestamp,
         num_epochs=args.train_epoch,
         s3_end_point=args.s3_end_point,
         s3_port=args.s3_port,

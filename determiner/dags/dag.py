@@ -76,7 +76,7 @@ def train_and_deploy_dag():
         task_id='train',
         name='train',
         namespace='airflow-cluster',
-        image='alsruf36/airflow-kobert-modeler:py38-cu111',
+        image='alsruf36/airflow-kobert-modeler:py37-cu111',
         cmds=["python3", "/tmp/bertModeler.py"],
         arguments=[
             "--ray_address", "{{ task_instance.xcom_pull('get_env')['RAY_ADDRESS'] }}",
@@ -109,7 +109,7 @@ def train_and_deploy_dag():
         task_id='deploy',
         name='deploy',
         namespace='airflow-cluster',
-        image='alsruf36/airflow-kobert-modeler:py38-cu111',
+        image='alsruf36/airflow-kobert-modeler:py37-cu111',
         cmds=["python3", "/tmp/bertEveluator.py"],
         arguments=[
             "--ray_address", "{{ task_instance.xcom_pull('get_env')['RAY_ADDRESS'] }}",
