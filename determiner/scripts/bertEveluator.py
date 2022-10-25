@@ -21,6 +21,7 @@ import time
 import io
 import argparse
 import json
+import requests
 
 #kobert
 from kobert_tokenizer import KoBERTTokenizer
@@ -44,6 +45,9 @@ def random_id(length):
         result += random.choice(string_pool)
     
     return result
+
+def GiB(size):
+    return size * 1000 * 1024 * 1024
 
 # Setting parameters
 max_len = 64
@@ -176,52 +180,59 @@ class AnalyzerCPU:
         self.model.eval()
     
     def __call__(self, api_request) -> str:
-        start = time.time()
+        def _predict(s):
+            data = [s, '0']
+            dataset_another = [data]
+
+            another_test = BERTDataset(dataset_another, 0, 1, self.tok, self.vocab, max_len, True, False)
+            test_dataloader = torch.utils.data.DataLoader(another_test, batch_size=batch_size, num_workers=5)
+        
+            for batch_id, (token_ids, valid_length, segment_ids, label) in enumerate(test_dataloader):
+                start = time.time()
+                token_ids = token_ids.long().to(self.device)
+                segment_ids = segment_ids.long().to(self.device)
+
+                valid_length= valid_length
+                label = label.long().to(self.device)
+
+                out = self.model(token_ids, valid_length, segment_ids)
+
+
+                test_eval=[]
+                for i in out:
+                    logits=i
+                    logits = logits.detach().cpu().numpy()
+
+                    if np.argmax(logits) == 0:
+                        test_eval.append(0)
+                    elif np.argmax(logits) == 1:
+                        test_eval.append(1)
+            
+                print("추정값 | {}".format(test_eval))
+
+            return test_eval[0]
+
         # Request came via an HTTP
         if isinstance(api_request, starlette.requests.Request):
             predict_sentence = api_request.query_params['sentence']
+            clean = api_request.query_params['clean']
+            plural = api_request.query_params['plural']
         else:
             # Request came via a ServerHandle API method call.
             predict_sentence = api_request
 
-        data = [predict_sentence, '0']
-        dataset_another = [data]
-        print(str(time.time() - start) + "초 만에 요청을 변환했습니다.")
+        if clean == 'true':
+            sentences = requests.get("https://api.kshs.dev/splitter", params={"body": predict_sentence}).json()
+            print(f"분리된 문장 : {sentences}")
+            result = [[x, _predict(x)] for x in sentences]
+            return result
 
-        start = time.time()
-        another_test = BERTDataset(dataset_another, 0, 1, self.tok, self.vocab, max_len, True, False)
-        test_dataloader = torch.utils.data.DataLoader(another_test, batch_size=batch_size, num_workers=5)
-        print(str(time.time() - start) + "초 만에 데이터를 변환했습니다.")
-
-        for batch_id, (token_ids, valid_length, segment_ids, label) in enumerate(test_dataloader):
-            start = time.time()
-            token_ids = token_ids.long().to(self.device)
-            segment_ids = segment_ids.long().to(self.device)
-
-            valid_length= valid_length
-            label = label.long().to(self.device)
-
-            out = self.model(token_ids, valid_length, segment_ids)
-
-
-            test_eval=[]
-            for i in out:
-                logits=i
-                logits = logits.detach().cpu().numpy()
-
-                if np.argmax(logits) == 0:
-                    test_eval.append(0)
-                elif np.argmax(logits) == 1:
-                    test_eval.append(1)
-            
-            print(str(time.time() - start) + "초 만에 추정하였습니다.")
-            print("추정값 | {}".format(test_eval))
-
-        return {
-            "pid": self.pid,
-            "sentence": predict_sentence,
-            "prediction": test_eval
-        }
+        else:
+            result = _predict(predict_sentence)
+            return {
+                "sentence": predict_sentence,
+                "prediction": result
+            }
 
 def get_kobert_model(model_path, vocab_file, ctx="cpu"):
     bertmodel = BertModel.from_pretrained(model_path, return_dict=False)
@@ -291,6 +302,8 @@ if __name__=='__main__':
     parser.add_argument('-a', '--s3_access_key', default='admin', type=str)
     parser.add_argument('-s', '--s3_secret_key', default='pass', type=str)
     parser.add_argument('-d', '--api_name', default='analyze', type=str)
+    parser.add_argument('-l', '--return_json', default=False, type=bool)
+    parser.add_argument('-g', '--num_replicas', default=1, type=int)
     args = parser.parse_args()
 
     print("ray cluster에 연결합니다.")
@@ -298,13 +311,16 @@ if __name__=='__main__':
     serve.start(detached=True, http_options={"host": "0.0.0.0"})
     
     model_path = "skt/kobert-base-v1"
-    bertmodel_ref, vocab_ref = ray.get(get_kobert.remote(model_path))
-    buffer_ref = ray.get(load_model.remote(args.file_name, args.s3_end_point, args.s3_port, args.s3_access_key, args.s3_secret_key))
-    model_cpu_ref = ray.get(put_model_cpu.remote(buffer_ref, bertmodel_ref))
+    bertmodel_ref, vocab_ref = ray.get(get_kobert.options(memory=GiB(6)).remote(model_path))
+    buffer_ref = ray.get(
+        load_model.options(memory=GiB(6)).remote(args.file_name, args.s3_end_point, args.s3_port, args.s3_access_key, args.s3_secret_key)
+    )
+    model_cpu_ref = ray.get(put_model_cpu.options(memory=GiB(6)).remote(buffer_ref, bertmodel_ref))
     
-    AnalyzerCPU.options(name=args.api_name, num_replicas=1).deploy(model_cpu_ref, vocab_ref, model_path)
+    AnalyzerCPU.options(name=args.api_name, num_replicas=args.num_replicas).deploy(model_cpu_ref, vocab_ref, model_path)
 
     serve_list = serve.list_deployments()
 
-    with open("/airflow/xcom/return.json", "w") as file:
-        json.dump(serve_list, file)
+    if args.return_json == True:
+        with open("/airflow/xcom/return.json", "w") as file:
+            json.dump(serve_list, file)
