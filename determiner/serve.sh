@@ -10,4 +10,5 @@ python3 scripts/bertEveluator.py    --ray_address ${RAY_ADDRESS} \
                                     --s3_port 9000 \
                                     --s3_access_key ${S3_ACCESS_KEY} \
                                     --s3_secret_key ${S3_SECRET_KEY} \
-                                    --api_name analyze
+                                    --api_name analyze \
+                                    --num_replicas 10
