@@ -40,8 +40,8 @@ class community:
             cons_percent = float(cons)/float(cons + pros)
             cons_percent = round(cons_percent,3)
             pros_percent = float(1) - cons_percent
-                    
-            return {
+            
+            ret = {
                 "cons": cons,
                 "pros": pros,
                 "nones": nones,
@@ -49,11 +49,14 @@ class community:
                 "pros_percent": pros_percent * 100
             }
 
+            print(ret)
+            return ret
+
         # Request came via an HTTP
         if isinstance(api_request, starlette.requests.Request):
             query = api_request.query_params['query']
             gallId = api_request.query_params['gallid']
-            limit = api_request.query_params['limit']
+            limit = int(api_request.query_params['limit'])
         else:
             # Request came via a ServerHandle API method call.
             body = api_request
@@ -62,7 +65,7 @@ class community:
             return get_article_list(limit, gallId)
 
         if query == "tend":
-            res = analyze_tend_with_limit(limit, gallId)
+            return analyze_tend_with_limit(limit, gallId)
 
         else:
             return "NO_OPTION_ERROR"
