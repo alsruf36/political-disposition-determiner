@@ -1,0 +1,9 @@
+base_image: python:3.7
+requirements:
+- cloudpickle
+- dill
+- kfp
+- matplotlib
+- numpy
+- pandas
+- PyYAML
